@@ -285,15 +285,14 @@ const Index = () => {
           <ModeToggle 
             mode={mode} 
             onChange={(newMode) => {
-              // When changing mode, clear files if they don't match
-              const filesOk = selectedFiles.every(f => 
-                newMode === 'decrypt' ? f.name.endsWith('.skita') : !f.name.endsWith('.skita')
-              );
-              if (!filesOk && selectedFiles.length > 0) {
-                setSelectedFiles([]);
-                setProcessedFiles([]);
-                setFileProgresses([]);
-              }
+              // When changing mode, always reset the entire state
+              setSelectedFiles([]);
+              setProcessedFiles([]);
+              setFileProgresses([]);
+              setPassword('');
+              setStatus('idle');
+              setOverallProgress(0);
+              setCurrentFileIndex(0);
               setMode(newMode);
               setError(undefined);
             }} 
