@@ -152,9 +152,8 @@ export async function encryptChunkChaCha(
   keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
-  // @ts-ignore - dynamic import works at runtime
-  const chacha = await import('@noble/ciphers/chacha.js');
-  const cipher = chacha.chacha20poly1305(keyBytes, nonce);
+  const { chacha20poly1305 } = await import('@noble/ciphers/chacha.js');
+  const cipher = chacha20poly1305(keyBytes, nonce);
   return cipher.encrypt(data);
 }
 
@@ -164,9 +163,8 @@ export async function decryptChunkChaCha(
   keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
-  // @ts-ignore - dynamic import works at runtime
-  const chacha = await import('@noble/ciphers/chacha.js');
-  const cipher = chacha.chacha20poly1305(keyBytes, nonce);
+  const { chacha20poly1305 } = await import('@noble/ciphers/chacha.js');
+  const cipher = chacha20poly1305(keyBytes, nonce);
   return cipher.decrypt(data);
 }
 
