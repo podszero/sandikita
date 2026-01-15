@@ -53,6 +53,48 @@ export function generateNonce(): Uint8Array {
   return generateRandomBytes(12);
 }
 
+// Calculate SHA-256 hash of data for integrity verification
+export async function calculateHash(data: Uint8Array): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data as unknown as BufferSource);
+  const hashArray = new Uint8Array(hashBuffer);
+  return Array.from(hashArray)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Calculate hash of a file in chunks (memory efficient)
+export async function calculateFileHash(
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<string> {
+  const chunkSize = 4 * 1024 * 1024; // 4MB chunks
+  const totalChunks = Math.ceil(file.size / chunkSize);
+  
+  // We'll hash the file incrementally
+  const chunks: Uint8Array[] = [];
+  
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, file.size);
+    const slice = file.slice(start, end);
+    const chunkData = new Uint8Array(await slice.arrayBuffer());
+    chunks.push(chunkData);
+    
+    onProgress?.(((i + 1) / totalChunks) * 100);
+  }
+  
+  // Combine all chunks and hash
+  const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const combined = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  return calculateHash(combined);
+}
+
 // Derive nonce from chunk index (deterministic, safe for HKDF-derived keys)
 export function deriveChunkNonce(masterNonce: Uint8Array, chunkIndex: number): Uint8Array {
   const nonce = new Uint8Array(12);
@@ -194,9 +236,16 @@ export async function decryptChunk(
   return decryptChunkAesGcm(data, keyBytes, nonce);
 }
 
-// Serialize file header to bytes
-export function serializeHeader(header: FileHeader): Uint8Array {
+// Extended file header with hash for integrity
+export interface FileHeaderV2 extends FileHeader {
+  originalHash: string; // SHA-256 hash of original file
+}
+
+// Serialize file header to bytes (v2 with hash)
+export function serializeHeader(header: FileHeader | FileHeaderV2): Uint8Array {
   const filenameBytes = new TextEncoder().encode(header.originalFilename);
+  const hasHash = 'originalHash' in header && header.originalHash;
+  const hashBytes = hasHash ? new TextEncoder().encode((header as FileHeaderV2).originalHash) : new Uint8Array(0);
   
   // Calculate header size
   const headerSize = 
@@ -212,7 +261,9 @@ export function serializeHeader(header: FileHeader): Uint8Array {
     4 + // original size (up to 4GB)
     4 + // total chunks
     2 + // filename length
-    filenameBytes.length; // filename
+    filenameBytes.length + // filename
+    1 + // has hash flag
+    (hasHash ? 64 : 0); // hash (64 hex chars for SHA-256)
   
   const buffer = new ArrayBuffer(headerSize);
   const view = new DataView(buffer);
@@ -266,12 +317,22 @@ export function serializeHeader(header: FileHeader): Uint8Array {
   
   // Filename
   bytes.set(filenameBytes, offset);
+  offset += filenameBytes.length;
+  
+  // Has hash flag
+  view.setUint8(offset, hasHash ? 1 : 0);
+  offset += 1;
+  
+  // Hash (if present)
+  if (hasHash) {
+    bytes.set(hashBytes, offset);
+  }
   
   return bytes;
 }
 
-// Deserialize header from bytes
-export function deserializeHeader(data: Uint8Array): FileHeader {
+// Deserialize header from bytes (supports v2 with hash)
+export function deserializeHeader(data: Uint8Array): FileHeaderV2 {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   let offset = 0;
   
@@ -329,6 +390,19 @@ export function deserializeHeader(data: Uint8Array): FileHeader {
   // Filename
   const filenameBytes = data.slice(offset, offset + filenameLength);
   const originalFilename = new TextDecoder().decode(filenameBytes);
+  offset += filenameLength;
+  
+  // Check if there's hash data (v2 format)
+  let originalHash = '';
+  if (offset < data.length) {
+    const hasHash = view.getUint8(offset);
+    offset += 1;
+    
+    if (hasHash === 1 && offset + 64 <= data.length) {
+      const hashBytes = data.slice(offset, offset + 64);
+      originalHash = new TextDecoder().decode(hashBytes);
+    }
+  }
   
   return {
     magic,
@@ -343,10 +417,11 @@ export function deserializeHeader(data: Uint8Array): FileHeader {
     originalFilename,
     originalSize,
     totalChunks,
+    originalHash,
   };
 }
 
-// Get header size from data
+// Get header size from data (supports v2 with hash)
 export function getHeaderSize(data: Uint8Array): number {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   
@@ -356,7 +431,19 @@ export function getHeaderSize(data: Uint8Array): number {
   // Filename length is at offset 56
   const filenameLength = view.getUint16(56, false);
   
-  return fixedSize + filenameLength;
+  // Base size with filename
+  let size = fixedSize + filenameLength;
+  
+  // Check for hash flag (v2)
+  if (size < data.length) {
+    const hasHash = view.getUint8(size);
+    size += 1; // has hash flag
+    if (hasHash === 1) {
+      size += 64; // SHA-256 hash as hex
+    }
+  }
+  
+  return size;
 }
 
 // Password strength checker
