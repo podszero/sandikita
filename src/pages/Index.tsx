@@ -134,7 +134,7 @@ const Index = () => {
           
           <p className="text-lg text-muted-foreground max-w-xl mx-auto mb-6">
             Enkripsi file kelas profesional. 100% lokal, zero upload, 
-            AES-256-GCM dengan Argon2id KDF.
+            AES-256-GCM & ChaCha20-Poly1305 dengan Argon2id KDF.
           </p>
           
           {/* Security badges */}
@@ -318,7 +318,7 @@ const Index = () => {
           <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground">
             <span className="font-mono">Format: .skita v1</span>
             <span className="w-px h-3 bg-border" />
-            <span>AES-256-GCM + Argon2id</span>
+            <span>AES-256 / ChaCha20 + Argon2id</span>
             <span className="w-px h-3 bg-border" />
             <span>Open Spec</span>
           </div>
