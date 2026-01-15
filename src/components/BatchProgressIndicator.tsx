@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Lock, Unlock, CheckCircle, AlertCircle, Loader2, File, FileArchive, Shield } from 'lucide-react';
+import { Lock, Unlock, CheckCircle, AlertCircle, Loader2, Shield } from 'lucide-react';
 import { formatFileSize } from '@/lib/crypto-utils';
-
+import { FileTypeIcon } from './FileTypeIcon';
 export interface FileProgress {
   file: File;
   status: 'pending' | 'processing' | 'success' | 'error';
@@ -92,8 +92,6 @@ export function BatchProgressIndicator({
       <div className="card-glow rounded-2xl p-4 max-h-80 overflow-y-auto">
         <div className="space-y-3">
           {files.map((fileProgress, index) => {
-            const isSkita = fileProgress.file.name.endsWith('.skita');
-            
             return (
               <motion.div
                 key={`${fileProgress.file.name}-${index}`}
@@ -127,10 +125,8 @@ export function BatchProgressIndicator({
                       <CheckCircle className="w-4 h-4 text-success" />
                     ) : fileProgress.status === 'error' ? (
                       <AlertCircle className="w-4 h-4 text-destructive" />
-                    ) : isSkita ? (
-                      <FileArchive className="w-4 h-4 text-muted-foreground" />
                     ) : (
-                      <File className="w-4 h-4 text-muted-foreground" />
+                      <FileTypeIcon filename={fileProgress.file.name} className="w-4 h-4" />
                     )}
                   </div>
 
