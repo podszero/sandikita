@@ -93,7 +93,7 @@ export async function deriveChunkKey(
   );
 }
 
-// Argon2id key derivation (using argon2-browser)
+// Argon2id key derivation (using hash-wasm)
 export async function deriveKeyArgon2(
   password: string,
   salt: Uint8Array,
@@ -101,23 +101,23 @@ export async function deriveKeyArgon2(
   iterations: number = 3,
   parallelism: number = 4
 ): Promise<CryptoKey> {
-  // Dynamic import of argon2-browser
-  const argon2 = await import('argon2-browser');
+  // Dynamic import of hash-wasm
+  const { argon2id } = await import('hash-wasm');
   
-  const result = await argon2.hash({
-    pass: password,
+  const hash = await argon2id({
+    password: password,
     salt: salt,
-    time: iterations,
-    mem: memory,
+    iterations: iterations,
+    memorySize: memory,
     parallelism: parallelism,
-    hashLen: 32,
-    type: argon2.ArgonType.Argon2id,
+    hashLength: 32,
+    outputType: 'binary',
   });
   
   // Import the derived key for AES-GCM
   return crypto.subtle.importKey(
     'raw',
-    result.hash,
+    hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer,
     { name: 'AES-GCM', length: 256 },
     true, // extractable for chunk key derivation
     ['encrypt', 'decrypt']
