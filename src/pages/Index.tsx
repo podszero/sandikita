@@ -41,18 +41,27 @@ const Index = () => {
   const [overallProgress, setOverallProgress] = useState(0);
 
   const handleFileSelect = useCallback((files: File[]) => {
+    // Auto-detect mode based on file type
+    const hasSkitaFiles = files.some(f => f.name.endsWith('.skita'));
+    const hasNormalFiles = files.some(f => !f.name.endsWith('.skita'));
+    
+    // If mixing file types, show warning and don't add
+    if (hasSkitaFiles && hasNormalFiles) {
+      setError('Tidak bisa mencampur file .skita dengan file biasa. Pilih satu jenis saja.');
+      return;
+    }
+    
+    // Auto-set mode based on file type
+    if (hasSkitaFiles) {
+      setMode('decrypt');
+    } else if (hasNormalFiles) {
+      setMode('encrypt');
+    }
+    
     setSelectedFiles(prev => [...prev, ...files]);
     setStatus('idle');
     setError(undefined);
-    
-    // Auto-detect mode if first file
-    if (selectedFiles.length === 0 && files.length > 0) {
-      const hasSkitaFiles = files.some(f => f.name.endsWith('.skita'));
-      if (hasSkitaFiles) {
-        setMode('decrypt');
-      }
-    }
-  }, [selectedFiles.length]);
+  }, []);
 
   const handleClearFiles = useCallback(() => {
     setSelectedFiles([]);
@@ -214,8 +223,19 @@ const Index = () => {
     setOverallProgress(0);
   };
 
-  const canProcess = selectedFiles.length > 0 && password.length >= 4;
+  // Validate files match the current mode
+  const filesMatchMode = selectedFiles.every(f => 
+    mode === 'decrypt' ? f.name.endsWith('.skita') : !f.name.endsWith('.skita')
+  );
+  const canProcess = selectedFiles.length > 0 && password.length >= 4 && filesMatchMode;
   const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+  
+  // Show warning if files don't match mode
+  const modeWarning = selectedFiles.length > 0 && !filesMatchMode
+    ? mode === 'encrypt' 
+      ? 'File .skita hanya bisa didekripsi, bukan dienkripsi'
+      : 'File biasa harus dienkripsi dulu sebelum didekripsi'
+    : null;
 
   return (
     <div className="min-h-screen bg-grid noise-overlay relative">
@@ -261,8 +281,23 @@ const Index = () => {
             </span>
           </div>
           
-          {/* Mode toggle */}
-          <ModeToggle mode={mode} onChange={setMode} />
+          {/* Mode toggle - disabled when files are selected */}
+          <ModeToggle 
+            mode={mode} 
+            onChange={(newMode) => {
+              // When changing mode, clear files if they don't match
+              const filesOk = selectedFiles.every(f => 
+                newMode === 'decrypt' ? f.name.endsWith('.skita') : !f.name.endsWith('.skita')
+              );
+              if (!filesOk && selectedFiles.length > 0) {
+                setSelectedFiles([]);
+                setProcessedFiles([]);
+                setFileProgresses([]);
+              }
+              setMode(newMode);
+              setError(undefined);
+            }} 
+          />
         </motion.header>
 
         {/* Main content */}
@@ -307,6 +342,20 @@ const Index = () => {
                   <div className="card-glow rounded-2xl p-6">
                     <AlgorithmSelector value={algorithm} onChange={setAlgorithm} />
                   </div>
+                )}
+
+                {/* Mode warning */}
+                {modeWarning && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-destructive/10 border border-destructive/30 rounded-xl p-4"
+                  >
+                    <p className="text-sm text-destructive flex items-center gap-2">
+                      <Info className="w-4 h-4" />
+                      {modeWarning}
+                    </p>
+                  </motion.div>
                 )}
 
                 {/* File info and action */}
