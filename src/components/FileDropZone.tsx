@@ -1,8 +1,9 @@
 import React, { useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, File, X, Lock, Unlock, FileArchive, Files, Trash2 } from 'lucide-react';
+import { Upload, X, Lock, Unlock, Files, Trash2, Sparkles, Shield } from 'lucide-react';
 import { formatFileSize } from '@/lib/crypto-utils';
 import { Button } from './ui/button';
+import { FileTypeIcon } from './FileTypeIcon';
 
 interface FileDropZoneProps {
   onFileSelect: (files: File[]) => void;
@@ -22,20 +23,37 @@ export function FileDropZone({
   multiple = true 
 }: FileDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [dragCounter, setDragCounter] = useState(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragCounter(prev => prev + 1);
+    setIsDragging(true);
+  }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(true);
+    e.stopPropagation();
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
+    e.stopPropagation();
+    setDragCounter(prev => {
+      const next = prev - 1;
+      if (next === 0) {
+        setIsDragging(false);
+      }
+      return next;
+    });
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
+    setDragCounter(0);
     
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
@@ -55,6 +73,9 @@ export function FileDropZone({
   const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
   const hasSkitaFiles = selectedFiles.some(f => f.name.endsWith('.skita'));
   const hasNonSkitaFiles = selectedFiles.some(f => !f.name.endsWith('.skita'));
+
+  // Floating particles animation for drag state
+  const particles = Array.from({ length: 6 }, (_, i) => i);
 
   return (
     <div className="relative">
@@ -93,10 +114,9 @@ export function FileDropZone({
               </Button>
             </div>
 
-            {/* File list */}
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-2">
+            {/* File list with type icons */}
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
               {selectedFiles.map((file, index) => {
-                const isSkita = file.name.endsWith('.skita');
                 return (
                   <motion.div
                     key={`${file.name}-${index}`}
@@ -105,15 +125,11 @@ export function FileDropZone({
                     transition={{ delay: index * 0.05 }}
                     className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors group"
                   >
-                    <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                      {isSkita ? (
-                        <FileArchive className="w-4 h-4 text-primary" />
-                      ) : (
-                        <File className="w-4 h-4 text-primary" />
-                      )}
+                    <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-background/80 border border-border/50 flex items-center justify-center shadow-sm">
+                      <FileTypeIcon filename={file.name} className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-foreground truncate">
+                      <p className="text-sm text-foreground truncate font-medium">
                         {file.name}
                       </p>
                       <p className="text-xs text-muted-foreground">
@@ -175,13 +191,61 @@ export function FileDropZone({
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
+            onDragEnter={handleDragEnter}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`drop-zone cursor-pointer block p-12 text-center transition-all duration-300 ${
-              isDragging ? 'active' : ''
+            className={`drop-zone relative overflow-hidden cursor-pointer block p-12 text-center transition-all duration-300 ${
+              isDragging ? 'active ring-2 ring-primary ring-offset-2 ring-offset-background' : ''
             }`}
           >
+            {/* Animated background gradient when dragging */}
+            <AnimatePresence>
+              {isDragging && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-gradient-to-br from-primary/10 via-primary/5 to-transparent pointer-events-none"
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Floating particles animation when dragging */}
+            <AnimatePresence>
+              {isDragging && (
+                <>
+                  {particles.map((i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ 
+                        opacity: 0, 
+                        scale: 0,
+                        x: `${50 + (Math.random() - 0.5) * 20}%`,
+                        y: '100%'
+                      }}
+                      animate={{ 
+                        opacity: [0, 1, 0],
+                        scale: [0.5, 1, 0.5],
+                        y: ['100%', `${20 + Math.random() * 30}%`],
+                        x: `${50 + (Math.random() - 0.5) * 60}%`
+                      }}
+                      exit={{ opacity: 0 }}
+                      transition={{
+                        duration: 1.5 + Math.random(),
+                        delay: i * 0.15,
+                        repeat: Infinity,
+                        repeatDelay: 0.5
+                      }}
+                      className="absolute pointer-events-none"
+                    >
+                      <Sparkles className="w-4 h-4 text-primary/60" />
+                    </motion.div>
+                  ))}
+                </>
+              )}
+            </AnimatePresence>
+
             <input
               type="file"
               onChange={handleFileInput}
@@ -191,20 +255,63 @@ export function FileDropZone({
             />
             
             <motion.div
-              animate={isDragging ? { scale: 1.1, y: -5 } : { scale: 1, y: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary/10 mb-6"
+              animate={isDragging 
+                ? { 
+                    scale: 1.15, 
+                    y: -10,
+                    rotate: [0, -5, 5, 0]
+                  } 
+                : { 
+                    scale: 1, 
+                    y: 0,
+                    rotate: 0
+                  }
+              }
+              transition={{ 
+                type: 'spring', 
+                stiffness: 300, 
+                damping: 20,
+                rotate: { duration: 0.5, repeat: isDragging ? Infinity : 0 }
+              }}
+              className={`relative inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-6 transition-all duration-300 ${
+                isDragging 
+                  ? 'bg-primary/20 shadow-lg shadow-primary/20' 
+                  : 'bg-primary/10'
+              }`}
             >
               {mode === 'encrypt' ? (
-                <Lock className="w-10 h-10 text-primary animate-lock-pulse" />
+                <Lock className={`w-10 h-10 text-primary transition-transform duration-300 ${
+                  isDragging ? 'scale-110' : 'animate-lock-pulse'
+                }`} />
               ) : (
-                <Unlock className="w-10 h-10 text-primary animate-lock-pulse" />
+                <Unlock className={`w-10 h-10 text-primary transition-transform duration-300 ${
+                  isDragging ? 'scale-110' : 'animate-lock-pulse'
+                }`} />
+              )}
+              
+              {/* Pulsing ring when dragging */}
+              {isDragging && (
+                <motion.div
+                  className="absolute inset-0 rounded-2xl border-2 border-primary"
+                  animate={{ scale: [1, 1.3, 1], opacity: [0.8, 0, 0.8] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                />
               )}
             </motion.div>
             
-            <p className="text-lg font-medium text-foreground mb-2">
-              {isDragging ? 'Lepaskan file di sini' : 'Drag & drop file di sini'}
-            </p>
+            <motion.p 
+              animate={isDragging ? { scale: 1.05 } : { scale: 1 }}
+              className="text-lg font-medium text-foreground mb-2"
+            >
+              {isDragging ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Shield className="w-5 h-5 text-primary animate-pulse" />
+                  Lepaskan file di sini!
+                </span>
+              ) : (
+                'Drag & drop file di sini'
+              )}
+            </motion.p>
             <p className="text-muted-foreground text-sm">
               atau <span className="text-primary hover:underline">pilih file</span>
               {mode === 'decrypt' && ' (*.skita)'}
