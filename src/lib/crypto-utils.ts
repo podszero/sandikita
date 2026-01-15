@@ -194,6 +194,7 @@ export async function encryptChunkChaCha(
   keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
+  // @ts-ignore - Dynamic import for ESM module with .js extension
   const { chacha20poly1305 } = await import('@noble/ciphers/chacha.js');
   const cipher = chacha20poly1305(keyBytes, nonce);
   return cipher.encrypt(data);
@@ -205,6 +206,7 @@ export async function decryptChunkChaCha(
   keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
+  // @ts-ignore - Dynamic import for ESM module with .js extension
   const { chacha20poly1305 } = await import('@noble/ciphers/chacha.js');
   const cipher = chacha20poly1305(keyBytes, nonce);
   return cipher.decrypt(data);
