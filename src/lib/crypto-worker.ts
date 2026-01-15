@@ -1,6 +1,7 @@
 /**
  * SandiKita Crypto Worker
  * Handles encryption/decryption for both AES-GCM and ChaCha20-Poly1305
+ * With integrity verification using SHA-256
  */
 
 import {
@@ -14,10 +15,11 @@ import {
   serializeHeader,
   deserializeHeader,
   getHeaderSize,
+  calculateHash,
   MAGIC_BYTES,
   FORMAT_VERSION,
   CHUNK_SIZE,
-  type FileHeader,
+  type FileHeaderV2,
   type Algorithm,
 } from './crypto-utils';
 
@@ -40,14 +42,45 @@ export interface DecryptOptions {
 export interface EncryptResult {
   blob: Blob;
   filename: string;
+  originalHash: string;
 }
 
 export interface DecryptResult {
   blob: Blob;
   filename: string;
+  verified: boolean;
+  originalHash?: string;
+  decryptedHash?: string;
 }
 
-// Encrypt file
+// Calculate hash of file data for integrity
+async function hashFileData(file: File, onProgress?: (p: number) => void): Promise<{ hash: string; data: Uint8Array[] }> {
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const chunks: Uint8Array[] = [];
+  
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const slice = file.slice(start, end);
+    const chunkData = new Uint8Array(await slice.arrayBuffer());
+    chunks.push(chunkData);
+    onProgress?.((i + 1) / totalChunks * 100);
+  }
+  
+  // Combine all chunks for hashing
+  const totalSize = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const combined = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  const hash = await calculateHash(combined);
+  return { hash, data: chunks };
+}
+
+// Encrypt file with integrity verification
 export async function encryptFile(options: EncryptOptions): Promise<EncryptResult> {
   const {
     file,
@@ -59,13 +92,20 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
     onProgress,
   } = options;
 
-  onProgress?.(0, 'Generating salt...');
+  onProgress?.(0, 'Menghitung hash file asli...');
+  
+  // First pass: read file and calculate hash
+  const { hash: originalHash, data: fileChunks } = await hashFileData(file, (p) => {
+    onProgress?.(p * 0.1, 'Menghitung hash file asli...');
+  });
+  
+  onProgress?.(10, 'Generating salt...');
   
   // Generate salt and master nonce
   const salt = generateSalt();
   const masterNonce = generateNonce();
   
-  onProgress?.(5, 'Deriving key with Argon2id...');
+  onProgress?.(12, 'Deriving key with Argon2id...');
   
   // Derive master key as raw bytes
   const masterKeyBytes = await deriveKeyArgon2Bytes(
@@ -76,13 +116,13 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
     kdfParallelism
   );
   
-  onProgress?.(15, 'Preparing encryption...');
+  onProgress?.(20, 'Preparing encryption...');
   
   // Calculate total chunks
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const totalChunks = fileChunks.length;
   
-  // Create header
-  const header: FileHeader = {
+  // Create header with hash
+  const header: FileHeaderV2 = {
     magic: MAGIC_BYTES,
     version: FORMAT_VERSION,
     algorithm,
@@ -95,6 +135,7 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
     originalFilename: file.name,
     originalSize: file.size,
     totalChunks,
+    originalHash,
   };
   
   const headerBytes = serializeHeader(header);
@@ -102,12 +143,9 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
   // Collect encrypted chunks
   const chunks: Uint8Array[] = [headerBytes];
   
-  // Read and encrypt file in chunks
+  // Encrypt each chunk
   for (let i = 0; i < totalChunks; i++) {
-    const start = i * CHUNK_SIZE;
-    const end = Math.min(start + CHUNK_SIZE, file.size);
-    const slice = file.slice(start, end);
-    const chunkData = new Uint8Array(await slice.arrayBuffer());
+    const chunkData = fileChunks[i];
     
     // Derive chunk-specific key and nonce
     const chunkKeyBytes = await deriveChunkKeyBytes(masterKeyBytes, i);
@@ -126,7 +164,7 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
     chunks.push(chunkRecord);
     
     // Update progress
-    const progress = 15 + (85 * (i + 1)) / totalChunks;
+    const progress = 20 + (80 * (i + 1)) / totalChunks;
     onProgress?.(progress, `Encrypting chunk ${i + 1}/${totalChunks}...`);
   }
   
@@ -136,24 +174,28 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
   const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
   const filename = `${file.name}.skita`;
   
-  return { blob, filename };
+  return { blob, filename, originalHash };
 }
 
-// Decrypt file
+// Decrypt file with integrity verification
 export async function decryptFile(options: DecryptOptions): Promise<DecryptResult> {
   const { file, password, onProgress } = options;
   
   onProgress?.(0, 'Reading file header...');
   
-  // Read enough bytes for header (max 1KB should be enough)
-  const headerSlice = file.slice(0, 1024);
+  // Read enough bytes for header (max 2KB for v2 with hash)
+  const headerSlice = file.slice(0, 2048);
   const headerData = new Uint8Array(await headerSlice.arrayBuffer());
   
   // Parse header
   const header = deserializeHeader(headerData);
   const headerSize = getHeaderSize(headerData);
   
-  onProgress?.(5, 'Deriving key with Argon2id...');
+  onProgress?.(5, `Detected: ${header.algorithm}`);
+  
+  await new Promise(resolve => setTimeout(resolve, 500)); // Brief pause to show algorithm
+  
+  onProgress?.(6, 'Deriving key with Argon2id...');
   
   // Derive master key as raw bytes
   const masterKeyBytes = await deriveKeyArgon2Bytes(
@@ -199,9 +241,35 @@ export async function decryptFile(options: DecryptOptions): Promise<DecryptResul
     // Move to next chunk
     offset += 16 + encryptedLength;
     
-    // Update progress
-    const progress = 15 + (85 * (i + 1)) / header.totalChunks;
+    // Update progress (leave 10% for integrity check)
+    const progress = 15 + (75 * (i + 1)) / header.totalChunks;
     onProgress?.(progress, `Decrypting chunk ${i + 1}/${header.totalChunks}...`);
+  }
+  
+  // Verify integrity if hash is available
+  let verified = false;
+  let decryptedHash: string | undefined;
+  
+  if (header.originalHash) {
+    onProgress?.(92, 'Verifikasi integritas file...');
+    
+    // Combine all decrypted chunks for hashing
+    const totalSize = decryptedChunks.reduce((acc, chunk) => acc + chunk.length, 0);
+    const combined = new Uint8Array(totalSize);
+    let hashOffset = 0;
+    for (const chunk of decryptedChunks) {
+      combined.set(chunk, hashOffset);
+      hashOffset += chunk.length;
+    }
+    
+    decryptedHash = await calculateHash(combined);
+    verified = decryptedHash === header.originalHash;
+    
+    if (!verified) {
+      throw new Error('Verifikasi gagal: File mungkin rusak atau telah dimodifikasi');
+    }
+    
+    onProgress?.(98, 'Integritas terverifikasi ✓');
   }
   
   onProgress?.(100, 'Complete!');
@@ -209,5 +277,133 @@ export async function decryptFile(options: DecryptOptions): Promise<DecryptResul
   // Combine all chunks into final blob
   const blob = new Blob(decryptedChunks as BlobPart[], { type: 'application/octet-stream' });
   
-  return { blob, filename: header.originalFilename };
+  return { 
+    blob, 
+    filename: header.originalFilename,
+    verified,
+    originalHash: header.originalHash,
+    decryptedHash,
+  };
+}
+
+// Batch encrypt multiple files
+export interface BatchEncryptOptions {
+  files: File[];
+  password: string;
+  algorithm: Algorithm;
+  kdfMemory?: number;
+  kdfIterations?: number;
+  kdfParallelism?: number;
+  onFileProgress?: (fileIndex: number, progress: number, stage: string) => void;
+  onFileComplete?: (fileIndex: number, result: EncryptResult) => void;
+  onFileError?: (fileIndex: number, error: Error) => void;
+}
+
+export interface BatchEncryptResult {
+  results: (EncryptResult | null)[];
+  errors: (Error | null)[];
+  totalSuccess: number;
+  totalFailed: number;
+}
+
+export async function batchEncryptFiles(options: BatchEncryptOptions): Promise<BatchEncryptResult> {
+  const { 
+    files, 
+    password, 
+    algorithm,
+    kdfMemory,
+    kdfIterations,
+    kdfParallelism,
+    onFileProgress,
+    onFileComplete,
+    onFileError,
+  } = options;
+  
+  const results: (EncryptResult | null)[] = [];
+  const errors: (Error | null)[] = [];
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const result = await encryptFile({
+        file: files[i],
+        password,
+        algorithm,
+        kdfMemory,
+        kdfIterations,
+        kdfParallelism,
+        onProgress: (progress, stage) => {
+          onFileProgress?.(i, progress, stage);
+        },
+      });
+      
+      results.push(result);
+      errors.push(null);
+      totalSuccess++;
+      onFileComplete?.(i, result);
+    } catch (error) {
+      results.push(null);
+      errors.push(error instanceof Error ? error : new Error(String(error)));
+      totalFailed++;
+      onFileError?.(i, error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  
+  return { results, errors, totalSuccess, totalFailed };
+}
+
+// Batch decrypt multiple files
+export interface BatchDecryptOptions {
+  files: File[];
+  password: string;
+  onFileProgress?: (fileIndex: number, progress: number, stage: string) => void;
+  onFileComplete?: (fileIndex: number, result: DecryptResult) => void;
+  onFileError?: (fileIndex: number, error: Error) => void;
+}
+
+export interface BatchDecryptResult {
+  results: (DecryptResult | null)[];
+  errors: (Error | null)[];
+  totalSuccess: number;
+  totalFailed: number;
+}
+
+export async function batchDecryptFiles(options: BatchDecryptOptions): Promise<BatchDecryptResult> {
+  const { 
+    files, 
+    password, 
+    onFileProgress,
+    onFileComplete,
+    onFileError,
+  } = options;
+  
+  const results: (DecryptResult | null)[] = [];
+  const errors: (Error | null)[] = [];
+  let totalSuccess = 0;
+  let totalFailed = 0;
+  
+  for (let i = 0; i < files.length; i++) {
+    try {
+      const result = await decryptFile({
+        file: files[i],
+        password,
+        onProgress: (progress, stage) => {
+          onFileProgress?.(i, progress, stage);
+        },
+      });
+      
+      results.push(result);
+      errors.push(null);
+      totalSuccess++;
+      onFileComplete?.(i, result);
+    } catch (error) {
+      results.push(null);
+      errors.push(error instanceof Error ? error : new Error(String(error)));
+      totalFailed++;
+      onFileError?.(i, error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  
+  return { results, errors, totalSuccess, totalFailed };
 }
