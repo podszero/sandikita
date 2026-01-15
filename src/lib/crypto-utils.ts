@@ -427,11 +427,20 @@ export function deserializeHeader(data: Uint8Array): FileHeaderV2 {
 export function getHeaderSize(data: Uint8Array): number {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   
-  // Fixed header size up to filename length field
-  const fixedSize = 4 + 2 + 1 + 1 + 4 + 4 + 1 + 32 + 4 + 4 + 4 + 2;
+  // Fixed header fields before filename length:
+  // magic(4) + version(2) + algo(1) + kdf(1) + memory(4) + iterations(4) + parallelism(1) + salt(32) + chunkSize(4) + originalSize(4) + totalChunks(4) = 61 bytes
+  // Then filename length (2 bytes) at offset 61
+  const filenameOffset = 4 + 2 + 1 + 1 + 4 + 4 + 1 + 32 + 4 + 4 + 4; // = 61
   
-  // Filename length is at offset 56
-  const filenameLength = view.getUint16(56, false);
+  // Check if we have enough data
+  if (data.length < filenameOffset + 2) {
+    throw new Error('Invalid file: header too short');
+  }
+  
+  const filenameLength = view.getUint16(filenameOffset, false);
+  
+  // Fixed header size up to and including filename length field
+  const fixedSize = filenameOffset + 2; // 63 bytes
   
   // Base size with filename
   let size = fixedSize + filenameLength;
