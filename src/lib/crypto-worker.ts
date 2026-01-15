@@ -1,11 +1,11 @@
 /**
  * SandiKita Crypto Worker
- * Handles encryption/decryption in a Web Worker to keep UI responsive
+ * Handles encryption/decryption for both AES-GCM and ChaCha20-Poly1305
  */
 
 import {
-  deriveKeyArgon2,
-  deriveChunkKey,
+  deriveKeyArgon2Bytes,
+  deriveChunkKeyBytes,
   deriveChunkNonce,
   encryptChunk,
   decryptChunk,
@@ -67,8 +67,8 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
   
   onProgress?.(5, 'Deriving key with Argon2id...');
   
-  // Derive master key
-  const masterKey = await deriveKeyArgon2(
+  // Derive master key as raw bytes
+  const masterKeyBytes = await deriveKeyArgon2Bytes(
     password,
     salt,
     kdfMemory,
@@ -110,11 +110,11 @@ export async function encryptFile(options: EncryptOptions): Promise<EncryptResul
     const chunkData = new Uint8Array(await slice.arrayBuffer());
     
     // Derive chunk-specific key and nonce
-    const chunkKey = await deriveChunkKey(masterKey, i);
+    const chunkKeyBytes = await deriveChunkKeyBytes(masterKeyBytes, i);
     const chunkNonce = deriveChunkNonce(masterNonce, i);
     
-    // Encrypt chunk
-    const encryptedChunk = await encryptChunk(chunkData, chunkKey, chunkNonce);
+    // Encrypt chunk with selected algorithm
+    const encryptedChunk = await encryptChunk(chunkData, chunkKeyBytes, chunkNonce, algorithm);
     
     // Create chunk record: [4 bytes length][12 bytes nonce][encrypted data with tag]
     const chunkRecord = new Uint8Array(4 + 12 + encryptedChunk.length);
@@ -155,8 +155,8 @@ export async function decryptFile(options: DecryptOptions): Promise<DecryptResul
   
   onProgress?.(5, 'Deriving key with Argon2id...');
   
-  // Derive master key
-  const masterKey = await deriveKeyArgon2(
+  // Derive master key as raw bytes
+  const masterKeyBytes = await deriveKeyArgon2Bytes(
     password,
     header.salt,
     header.kdfMemory,
@@ -186,11 +186,11 @@ export async function decryptFile(options: DecryptOptions): Promise<DecryptResul
     const encryptedData = new Uint8Array(await encryptedSlice.arrayBuffer());
     
     // Derive chunk key
-    const chunkKey = await deriveChunkKey(masterKey, i);
+    const chunkKeyBytes = await deriveChunkKeyBytes(masterKeyBytes, i);
     
     try {
-      // Decrypt chunk
-      const decryptedChunk = await decryptChunk(encryptedData, chunkKey, chunkNonce);
+      // Decrypt chunk with algorithm from header
+      const decryptedChunk = await decryptChunk(encryptedData, chunkKeyBytes, chunkNonce, header.algorithm);
       decryptedChunks.push(decryptedChunk);
     } catch (error) {
       throw new Error('Dekripsi gagal: Password salah atau file rusak');

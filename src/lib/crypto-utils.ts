@@ -1,6 +1,6 @@
 /**
  * SandiKita Crypto Utilities
- * AES-256-GCM encryption with Argon2id KDF
+ * AES-256-GCM & ChaCha20-Poly1305 encryption with Argon2id KDF
  */
 
 // File format constants
@@ -48,7 +48,7 @@ export function generateSalt(): Uint8Array {
   return generateRandomBytes(32);
 }
 
-// Generate nonce/IV for AES-GCM (12 bytes)
+// Generate nonce/IV for AES-GCM (12 bytes) or ChaCha20-Poly1305 (12 bytes)
 export function generateNonce(): Uint8Array {
   return generateRandomBytes(12);
 }
@@ -62,45 +62,44 @@ export function deriveChunkNonce(masterNonce: Uint8Array, chunkIndex: number): U
   return nonce;
 }
 
-// Simple HKDF-like key derivation for chunk keys
-export async function deriveChunkKey(
-  masterKey: CryptoKey,
+// Simple HKDF-like key derivation for chunk keys (returns raw bytes)
+export async function deriveChunkKeyBytes(
+  masterKeyBytes: Uint8Array,
   chunkIndex: number
-): Promise<CryptoKey> {
-  // Export master key to raw bytes
-  const masterKeyBytes = await crypto.subtle.exportKey('raw', masterKey);
-  
+): Promise<Uint8Array> {
   // Create info for this chunk
   const info = new TextEncoder().encode(`chunk-${chunkIndex}`);
   
   // Combine master key with chunk info
-  const combined = new Uint8Array(
-    (masterKeyBytes as ArrayBuffer).byteLength + info.byteLength
-  );
-  combined.set(new Uint8Array(masterKeyBytes as ArrayBuffer), 0);
-  combined.set(info, (masterKeyBytes as ArrayBuffer).byteLength);
+  const combined = new Uint8Array(masterKeyBytes.byteLength + info.byteLength);
+  combined.set(masterKeyBytes, 0);
+  combined.set(info, masterKeyBytes.byteLength);
   
   // Hash to derive chunk key
   const chunkKeyBytes = await crypto.subtle.digest('SHA-256', combined);
   
-  // Import as AES-GCM key
+  return new Uint8Array(chunkKeyBytes);
+}
+
+// Derive CryptoKey from raw bytes for AES-GCM
+export async function importAesKey(keyBytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    chunkKeyBytes,
+    keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer,
     { name: 'AES-GCM', length: 256 },
     false,
     ['encrypt', 'decrypt']
   );
 }
 
-// Argon2id key derivation (using hash-wasm)
-export async function deriveKeyArgon2(
+// Argon2id key derivation - returns raw bytes for flexibility
+export async function deriveKeyArgon2Bytes(
   password: string,
   salt: Uint8Array,
   memory: number = 65536, // 64MB
   iterations: number = 3,
   parallelism: number = 4
-): Promise<CryptoKey> {
+): Promise<Uint8Array> {
   // Dynamic import of hash-wasm
   const { argon2id } = await import('hash-wasm');
   
@@ -114,22 +113,16 @@ export async function deriveKeyArgon2(
     outputType: 'binary',
   });
   
-  // Import the derived key for AES-GCM
-  return crypto.subtle.importKey(
-    'raw',
-    hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer,
-    { name: 'AES-GCM', length: 256 },
-    true, // extractable for chunk key derivation
-    ['encrypt', 'decrypt']
-  );
+  return hash;
 }
 
 // Encrypt a single chunk with AES-GCM
-export async function encryptChunk(
+export async function encryptChunkAesGcm(
   data: Uint8Array,
-  key: CryptoKey,
+  keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
+  const key = await importAesKey(keyBytes);
   const encrypted = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: nonce as unknown as BufferSource, tagLength: 128 },
     key,
@@ -139,17 +132,68 @@ export async function encryptChunk(
 }
 
 // Decrypt a single chunk with AES-GCM
-export async function decryptChunk(
+export async function decryptChunkAesGcm(
   data: Uint8Array,
-  key: CryptoKey,
+  keyBytes: Uint8Array,
   nonce: Uint8Array
 ): Promise<Uint8Array> {
+  const key = await importAesKey(keyBytes);
   const decrypted = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: nonce as unknown as BufferSource, tagLength: 128 },
     key,
     data as unknown as BufferSource
   );
   return new Uint8Array(decrypted);
+}
+
+// Encrypt a single chunk with ChaCha20-Poly1305
+export async function encryptChunkChaCha(
+  data: Uint8Array,
+  keyBytes: Uint8Array,
+  nonce: Uint8Array
+): Promise<Uint8Array> {
+  // @ts-ignore - dynamic import works at runtime
+  const chacha = await import('@noble/ciphers/chacha.js');
+  const cipher = chacha.chacha20poly1305(keyBytes, nonce);
+  return cipher.encrypt(data);
+}
+
+// Decrypt a single chunk with ChaCha20-Poly1305
+export async function decryptChunkChaCha(
+  data: Uint8Array,
+  keyBytes: Uint8Array,
+  nonce: Uint8Array
+): Promise<Uint8Array> {
+  // @ts-ignore - dynamic import works at runtime
+  const chacha = await import('@noble/ciphers/chacha.js');
+  const cipher = chacha.chacha20poly1305(keyBytes, nonce);
+  return cipher.decrypt(data);
+}
+
+// Universal encrypt chunk based on algorithm
+export async function encryptChunk(
+  data: Uint8Array,
+  keyBytes: Uint8Array,
+  nonce: Uint8Array,
+  algorithm: Algorithm
+): Promise<Uint8Array> {
+  if (algorithm === 'ChaCha20-Poly1305') {
+    return encryptChunkChaCha(data, keyBytes, nonce);
+  }
+  return encryptChunkAesGcm(data, keyBytes, nonce);
+}
+
+// Universal decrypt chunk based on algorithm
+export async function decryptChunk(
+  data: Uint8Array,
+  keyBytes: Uint8Array,
+  nonce: Uint8Array,
+  algorithm: Algorithm
+): Promise<Uint8Array> {
+  if (algorithm === 'ChaCha20-Poly1305') {
+    return decryptChunkChaCha(data, keyBytes, nonce);
+  }
+  return decryptChunkAesGcm(data, keyBytes, nonce);
 }
 
 // Serialize file header to bytes

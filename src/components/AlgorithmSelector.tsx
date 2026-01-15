@@ -21,7 +21,6 @@ const algorithms: { id: Algorithm; name: string; description: string; icon: Reac
     name: 'ChaCha20-Poly1305',
     description: 'Modern, excellent for mobile',
     icon: <Zap className="w-5 h-5" />,
-    badge: 'Coming Soon',
   },
 ];
 
@@ -38,19 +37,15 @@ export function AlgorithmSelector({ value, onChange }: AlgorithmSelectorProps) {
       <div className="grid grid-cols-2 gap-3">
         {algorithms.map((algo) => {
           const isSelected = value === algo.id;
-          const isDisabled = algo.id === 'ChaCha20-Poly1305'; // Coming soon
           
           return (
             <button
               key={algo.id}
               type="button"
-              onClick={() => !isDisabled && onChange(algo.id)}
-              disabled={isDisabled}
+              onClick={() => onChange(algo.id)}
               className={`relative p-4 rounded-xl border-2 text-left transition-all ${
                 isSelected
                   ? 'border-primary bg-primary/5 shadow-glow'
-                  : isDisabled
-                  ? 'border-border bg-muted/30 opacity-50 cursor-not-allowed'
                   : 'border-border hover:border-primary/50 hover:bg-muted/30'
               }`}
             >
